@@ -211,6 +211,14 @@ target_link_libraries(path_gen_srv ${catkin_LIBRARIES})
 add_dependencies(path_gen_srv path_gen_gencpp)
 
 
-add_executable(vechle_test src/vechle_test.cpp)
-target_link_libraries(vechle_test ${catkin_LIBRARIES})
-add_dependencies(vechle_test path_gen_gencpp)
+add_executable(vehicle1 src/vehicle1.cpp)
+target_link_libraries(vehicle1 ${catkin_LIBRARIES})
+add_dependencies(vehicle1 path_gen_gencpp)
+
+add_executable(vehicle2 src/vehicle2.cpp)
+target_link_libraries(vehicle2 ${catkin_LIBRARIES})
+add_dependencies(vehicle2 path_gen_gencpp)
+
+add_executable(vehicle3 src/vehicle3.cpp)
+target_link_libraries(vehicle3 ${catkin_LIBRARIES})
+add_dependencies(vehicle3 path_gen_gencpp)

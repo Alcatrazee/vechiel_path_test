@@ -46,7 +46,7 @@ using namespace std;
 #define y_bias -2000
 
 int8_t map_arr[Height][Width];
-nav_msgs::Path path;
+
 uint16_t max_openset_index = 0;
 nav_msgs::GetMap get_map;
 /*
@@ -58,16 +58,19 @@ uint16_t A_star_path_finding(int8_t map[Height][Width], uint16_t start_point[2],
 inline int Get_heuristic_function(uint16_t current_point[2], uint16_t Goal[2]);
 int check_end_point_in_OpenSet(uint16_t end_point[2], uint16_t OpenSet[OpenSet_array_size][7]);
 uint32_t Get_minimun_fn_coord(uint16_t OpenSet[OpenSet_array_size][7]);
-uint16_t Get_gn(uint16_t current_point_gn, char dir, uint16_t end_point[2]);
+uint16_t Get_gn(uint16_t current_point_gn, char dir);
 void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t end_point[2], uint16_t start_point[2], uint16_t closed_list_counter);
 bool Is_OpenSet_empty(uint16_t OpenSet[OpenSet_array_size][7]);
 void Init(uint16_t OpenSet[OpenSet_array_size][7]);
-bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter);
+bool Is_in_closed_set(uint16_t point[2], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter);
+short Is_in_Open_set(uint16_t point[2], uint16_t Openset[OpenSet_array_size][7]);
 uint16_t Find_parent_index(uint16_t parent[2], uint16_t ClosedSet[closedset_array_size][7], uint16_t CloseSet_index);
 uint16_t Get_path(uint16_t ClosedSet[closedset_array_size][7], uint16_t CloseSet_index, uint16_t Path[length][fn], uint16_t start_point[2]);
 uint16_t Check_start_end_point(int8_t map[Height][Width], uint16_t start_point[2], uint16_t end_point[2]);
 void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution);
 bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::path_gen_srv::Response &res);
+bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter);
+
 // path finding function,can be alternate to other algorithm like Dijstra
 uint16_t A_star_path_finding(int8_t map[Height][Width], uint16_t start_point[2], uint16_t end_point[2], uint16_t Path[length][fn])
 {
@@ -172,15 +175,8 @@ void Init(uint16_t OpenSet[OpenSet_array_size][7])
 }
 
 // check if the point is in the open set or closed set.
-bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter)
+bool Is_in_closed_set(uint16_t point[2], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter)
 {
-	for (int i = 0; i < max_openset_index; i++)
-	{
-		if (OpenSet[i][valid_bit] == 1 && (OpenSet[i][row] == point[0] && OpenSet[i][column] == point[1]))
-		{
-			return true;
-		}
-	}
 	for (int i = 0; i < closed_list_counter; i++)
 	{
 		if (ClosedSet[i][row] == point[0] && ClosedSet[i][column] == point[1])
@@ -202,6 +198,38 @@ bool Is_OpenSet_empty(uint16_t OpenSet[OpenSet_array_size][7])
 	return true;
 }
 
+// check if point is in openset,if it is, return index ,else return -1
+short Is_in_Open_set(uint16_t point[2], uint16_t Openset[OpenSet_array_size][7])
+{
+	for (int i = 0; i < max_openset_index; i++)
+	{
+		if (Openset[i][row] == point[0] && Openset[i][column] == point[1] && Openset[i][valid_bit] == valid)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter)
+{
+	for (int i = 0; i < max_openset_index; i++)
+	{
+		if (OpenSet[i][valid_bit] == 1 && (OpenSet[i][row] == point[0] && OpenSet[i][column] == point[1]))
+		{
+			return true;
+		}
+	}
+	for (int i = 0; i < closed_list_counter; i++)
+	{
+		if (ClosedSet[i][row] == point[0] && ClosedSet[i][column] == point[1])
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t end_point[2], uint16_t start_point[2], uint16_t closed_list_counter)
 {
 
@@ -210,264 +238,387 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 	// upper
 	point[0] = current_point[0] - 1;
 	point[1] = current_point[1];
-	if (current_point[0] > 0 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != unknown_mark && map[point[0]][point[1]] != obstacle_mark)
+
+	if (current_point[0] > 0 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != unknown_mark && map[point[0]][point[1]] != obstacle_mark)
 	{
 		// create a point variable
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		index = Is_in_Open_set(point, OpenSet);
+
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], normal);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], normal, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], normal);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 	// upper left
 	point[0] = current_point[0] - 1;
 	point[1] = current_point[1] - 1;
-	if (current_point[1] > 0 && current_point[0] > 0 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+
+	if (current_point[1] > 0 && current_point[0] > 0 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
 		// create a point variable
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		index = Is_in_Open_set(point, OpenSet);
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], hypotenous, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 
 	// upper right
 	point[0] = current_point[0] - 1;
 	point[1] = current_point[1] + 1;
-	if (current_point[1] < Width - 1 && current_point[0] > 0 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+
+	if (current_point[1] < Width - 1 && current_point[0] > 0 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
 		// create a point variable
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		index = Is_in_Open_set(point, OpenSet);
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], hypotenous, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 
 	// left
 	point[0] = current_point[0];
 	point[1] = current_point[1] - 1;
-	if (current_point[1] > 0 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+
+	if (current_point[1] > 0 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		// create a point variable
+		index = Is_in_Open_set(point, OpenSet);
+
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], normal);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], normal, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], normal);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 	// right
 	point[0] = current_point[0];
 	point[1] = current_point[1] + 1;
-	if (current_point[1] < Width - 1 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+
+	if (current_point[1] < Width - 1 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
 
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		// create a point variable
+		index = Is_in_Open_set(point, OpenSet);
+
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], normal);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], normal, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], normal);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 	// down
 	point[0] = current_point[0] + 1;
 	point[1] = current_point[1];
-	if (current_point[0] < Height - 1 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+	if (current_point[0] < Height - 1 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		// create a point variable
+		index = Is_in_Open_set(point, OpenSet);
+
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], normal);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], normal, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], normal);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 
 	// lower left
 	point[0] = current_point[0] + 1;
 	point[1] = current_point[1] - 1;
-	if (current_point[1] > 0 && current_point[0] < Height - 1 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+	if (current_point[1] > 0 && current_point[0] < Height - 1 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
 		// create a point variable
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		index = Is_in_Open_set(point, OpenSet);
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], hypotenous, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 
 	// lower right
 	point[0] = current_point[0] + 1;
 	point[1] = current_point[1] + 1;
-	if (current_point[1] < Width - 1 && current_point[0] < Height - 1 && !Is_in_open_or_closed_set(point, OpenSet, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
+
+	if (current_point[1] < Width - 1 && current_point[0] < Height - 1 && !Is_in_closed_set(point, ClosedSet, closed_list_counter) && map[point[0]][point[1]] != obstacle_mark && map[point[0]][point[1]] != unknown_mark)
 	{
 		// create a point variable
-		index = 0;
-		for (int i = 0; i < OpenSet_array_size; i++)
+		index = Is_in_Open_set(point, OpenSet);
+		if (index != -1) // point is existed
 		{
-			if (OpenSet[i][valid_bit] == 0)
+			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
-				index = i;
-				break;
-			}
-			else if (i == OpenSet_array_size)
-			{
-				cout << "open list fulled." << endl;
+				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][parent_row] = current_point[row];
+				OpenSet[index][parent_col] = current_point[column];
+				OpenSet[index][valid_bit] = valid;
 			}
 		}
-		OpenSet[index][row] = point[row];
-		OpenSet[index][column] = point[column];
-		OpenSet[index][gn] = Get_gn(current_point[2], hypotenous, end_point);
-		OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
-		OpenSet[index][parent_row] = current_point[row];
-		OpenSet[index][parent_col] = current_point[column];
-		OpenSet[index][valid_bit] = valid;
-		if (index > max_openset_index)
+		else // point is not exist in openset
 		{
-			max_openset_index = index;
+			for (int i = 0; i < OpenSet_array_size; i++)
+			{
+				if (OpenSet[i][valid_bit] == 0)
+				{
+					index = i;
+					break;
+				}
+				else if (i == OpenSet_array_size)
+				{
+					cout << "open list fulled." << endl;
+				}
+			}
+			OpenSet[index][row] = point[row];
+			OpenSet[index][column] = point[column];
+			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][parent_row] = current_point[row];
+			OpenSet[index][parent_col] = current_point[column];
+			OpenSet[index][valid_bit] = valid;
+			if (index > max_openset_index)
+			{
+				max_openset_index = index;
+			}
 		}
 	}
 }
-
 // get Manhaton distance
 inline int Get_heuristic_function(uint16_t current_point[2], uint16_t Goal[2])
 {
-	//return sqrt((current_point[0] - Goal[0])*(current_point[0] - Goal[0]) + (current_point[1] - Goal[1])*(current_point[1] - Goal[1]))*cost*heuristic_scaler;
+	//return sqrt((current_point[0] - Goal[0]) * (current_point[0] - Goal[0]) + (current_point[1] - Goal[1]) * (current_point[1] - Goal[1])) * cost * heuristic_scaler;
 	return (abs(Goal[1] - current_point[1]) + abs(Goal[0] - current_point[0])) * cost * heuristic_scaler;
 }
 
-uint16_t Get_gn(uint16_t current_point_gn, char dir, uint16_t end_point[2])
+uint16_t Get_gn(uint16_t current_point_gn, char dir)
 {
 	static const int cost_hypo = sqrt(cost * cost + cost * cost);
 	uint16_t gn_ = 0;
@@ -485,7 +636,6 @@ uint16_t Get_gn(uint16_t current_point_gn, char dir, uint16_t end_point[2])
 
 int check_end_point_in_OpenSet(uint16_t end_point[2], uint16_t OpenSet[OpenSet_array_size][7])
 {
-	ROS_INFO("eer");
 	for (uint16_t i = 0; i < max_openset_index; i++)
 	{
 		if (OpenSet[i][row] == end_point[0] && OpenSet[i][column] == end_point[1])
@@ -548,12 +698,13 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	float start[2], end[2];								 // received start and goal(assumed)
 	uint16_t start_point[2], end_point[2]; // transformed start point and end point
 	uint16_t Path_length;
+	nav_msgs::Path path;
 
-	start[0] = req.start_point.position.x;
-	start[1] = req.start_point.position.y;
+	start[0] = req.start_point.position.y; // row,which is y in grid map coordinate
+	start[1] = req.start_point.position.x;
 
-	end[0] = req.goal.position.x;
-	end[1] = req.goal.position.y;
+	end[0] = req.goal.position.y;
+	end[1] = req.goal.position.x;
 
 	ROS_INFO("%f %f %f %f", start[0], start[1], end[0], end[1]);
 
@@ -612,7 +763,6 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 			res.Path = path;
 		}
 	}
-	cout << max_openset_index << endl;
 	return true;
 }
 
