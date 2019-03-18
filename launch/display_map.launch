@@ -2,9 +2,9 @@
 <launch>
     <node pkg="map_server" name="map_server" type="map_server" args="$(find path_gen_srv)/maps/map.yaml" output="screen" />
     <node pkg="rviz" name="rviz" type="rviz" args="-d $(find path_gen_srv)/display_path.rviz"/>
-<!--     <node pkg="path_gen_srv" name="path_gen_server" type="path_gen_srv" /> -->
-<!--     <node pkg="path_gen_srv" name="robot3" type="vehicle2" />
-    <node pkg="path_gen_srv" name="robot2" type="vehicle3" /> -->
-    <node pkg="path_gen_srv" name="robot1" type="vehicle1" />
+    <node pkg="path_gen_srv" name="path_gen_server" type="path_gen_srv" />
+    <node pkg="path_gen_srv" name="robot3" type="vehicle2" />
+<!--     <node pkg="path_gen_srv" name="robot2" type="vehicle3" />
+    <node pkg="path_gen_srv" name="robot1" type="vehicle1" /> -->
 </launch>
 

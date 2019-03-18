@@ -14,9 +14,9 @@ int main(int argc, char **argv)
   ros::Publisher path_pub = nh.advertise<nav_msgs::Path>("robot1_path", 10);
   ros::Rate rate(1);
   path_gen_srv::path_gen_srv path_req;
-  path_req.request.goal.position.x = -4.41;
+  path_req.request.goal.position.x = 4.41;
   path_req.request.goal.position.y = 2.5;
-  path_req.request.start_point.position.x = 4.16;
+  path_req.request.start_point.position.x = -4.16;
   path_req.request.start_point.position.y = 2.5;
   nav_msgs::Path path;
   ROS_INFO("Initialization complete.");
@@ -26,7 +26,6 @@ int main(int argc, char **argv)
     {
       path = path_req.response.Path;
       path_pub.publish(path);
-      ROS_INFO("%d", path.poses.size());
       /*      if (path_req.request.start_point.position.y <= -4.5)
       {
         path_req.request.start_point.position.y += 0.05;

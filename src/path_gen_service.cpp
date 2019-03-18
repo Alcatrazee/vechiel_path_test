@@ -11,18 +11,26 @@
 #include <tf/tf.h>
 #include <path_gen_srv/path_gen_srv.h>
 #include <nav_msgs/GetMap.h>
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "dynamic_reconfigure/server.h"
+#include <path_gen_srv/path_srvConfig.h>
+
 using namespace std;
+using namespace cv;
 // define size of the map.(In ros,4000x4000 is default setting)
-#define Height 4000
-#define Width 4000
+#define Height 400
+#define Width 400
 // define size of openset and closedset
 #define OpenSet_array_size 2000
 #define closedset_array_size 40000
 // define mark of obstacle and unknown place on the map
 #define obstacle_mark 100
 #define unknown_mark -1
-// define heuristic function gain,it can be [0,inf]
-#define heuristic_scaler 1
+
 // define cost of moving to next grid(only normal moving)
 #define cost 10
 // define openset and closedset index
@@ -42,13 +50,18 @@ using namespace std;
 #define hypotenous 1
 #define normal 0
 // define two bias for coordinate transformation
-#define x_bias -2000
-#define y_bias -2000
+#define x_bias -200
+#define y_bias -200
 
 int8_t map_arr[Height][Width];
+Mat cost_map;
 
 uint16_t max_openset_index = 0;
 nav_msgs::GetMap get_map;
+
+float cost_scalar = 0.7;
+// define heuristic function gain,it can be [0,inf]
+float heuristic_scaler = 1;
 /*
 	error code  0: no sloution to the map
 	error code -1:
@@ -70,7 +83,17 @@ uint16_t Check_start_end_point(int8_t map[Height][Width], uint16_t start_point[2
 void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution);
 bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::path_gen_srv::Response &res);
 bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter);
+inline float Get_cost_map_value(uint16_t point[2]);
+void inverse_color(void);
+void reconfigure_callback(path_gen_srv::path_srvConfig &config, uint32_t level);
+void find_avaiable_point(uint16_t point[2]);
 
+void reconfigure_callback(path_gen_srv::path_srvConfig &config, uint32_t level)
+{
+	cost_scalar = config.cost_scalar;
+	heuristic_scaler = config.heuristic_scaler;
+	ROS_INFO("cost scalar:%f  heuristic scalar:%f", cost_scalar, heuristic_scaler);
+}
 // path finding function,can be alternate to other algorithm like Dijstra
 uint16_t A_star_path_finding(int8_t map[Height][Width], uint16_t start_point[2], uint16_t end_point[2], uint16_t Path[length][fn])
 {
@@ -230,6 +253,11 @@ bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_
 	return false;
 }
 
+inline float Get_cost_map_value(uint16_t point[2])
+{
+	return cost_map.data[point[0] * Width + point[1]] * cost_scalar;
+}
+
 void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t end_point[2], uint16_t start_point[2], uint16_t closed_list_counter)
 {
 
@@ -249,7 +277,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], normal);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -272,7 +300,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], normal);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -295,7 +323,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -318,7 +346,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -342,7 +370,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -365,7 +393,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -390,7 +418,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], normal);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -413,7 +441,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], normal);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -438,7 +466,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], normal);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -461,7 +489,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], normal);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -484,7 +512,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], normal) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], normal);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -507,7 +535,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], normal);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -530,7 +558,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -553,7 +581,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -577,7 +605,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			if (Get_gn(current_point[2], hypotenous) < OpenSet[index][gn])
 			{
 				OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+				OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 				OpenSet[index][parent_row] = current_point[row];
 				OpenSet[index][parent_col] = current_point[column];
 				OpenSet[index][valid_bit] = valid;
@@ -600,7 +628,7 @@ void Expend_current_point(int8_t map[Height][Height], uint16_t current_point[3],
 			OpenSet[index][row] = point[row];
 			OpenSet[index][column] = point[column];
 			OpenSet[index][gn] = Get_gn(current_point[2], hypotenous);
-			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn];
+			OpenSet[index][fn] = Get_heuristic_function(point, end_point) + OpenSet[index][gn] + Get_cost_map_value(point);
 			OpenSet[index][parent_row] = current_point[row];
 			OpenSet[index][parent_col] = current_point[column];
 			OpenSet[index][valid_bit] = valid;
@@ -690,6 +718,56 @@ void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2],
 	end_point[1] = (uint16_t)(end[1] / *map_resolution - x_bias);
 }
 
+void inverse_color(void)
+{
+	for (int i = 0; i < Height; i++)
+	{
+		for (int j = 0; j < Width; j++)
+		{
+			cost_map.data[i * Width + j] = 255 - cost_map.data[i * Width + j];
+		}
+	}
+}
+
+void find_avaiable_point(uint16_t point[2])
+{
+	uint8_t expend_index = 0;
+	do
+	{
+		expend_index++;
+		for (int i = -expend_index; i <= expend_index; i++)
+		{
+			if (map_arr[point[0] - expend_index][point[1] + i] != obstacle_mark && map_arr[point[0] - expend_index][point[1] + i] != unknown_mark) // ->
+			{
+				point[0] = point[0] - expend_index;
+				point[1] = point[1] + i;
+				return;
+			}
+			if (map_arr[point[0] + i][point[1] - expend_index] != obstacle_mark && map_arr[point[0] + i][point[1] - expend_index] != unknown_mark) // go down
+			{
+				point[0] = point[0] + i;
+				point[1] = point[1] - expend_index;
+				return;
+			}
+		}
+		for (int i = -expend_index + 1; i <= expend_index; i++)
+		{
+			if (map_arr[point[0] + expend_index][point[1] + i] != obstacle_mark && map_arr[point[0] + expend_index][point[1] + i] != unknown_mark) // ->
+			{
+				point[0] = point[0] - expend_index;
+				point[1] = point[1] + i;
+				return;
+			}
+			if (map_arr[point[0] + i][point[1] + expend_index] != obstacle_mark && map_arr[point[0] + i][point[1] + expend_index] != unknown_mark) // go down
+			{
+				point[0] = point[0] + i;
+				point[1] = point[1] - expend_index;
+				return;
+			}
+		}
+	} while (expend_index < 200);
+}
+
 bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::path_gen_srv::Response &res)
 {
 
@@ -709,29 +787,35 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	ROS_INFO("%f %f %f %f", start[0], start[1], end[0], end[1]);
 
 	Transform_coordinate(start, end, start_point, end_point, &get_map.response.map.info.resolution);
-	ROS_INFO("%d %d %d %d", start_point[0], start_point[1], end_point[0], end_point[1]);
-	//Create_map(map, cost_map, show_map); // create maps with grid cell , 0 represents navigatable terrain and 'x' or -1 represents the no-go zone
-	switch (Check_start_end_point(map_arr, start_point, end_point))
+
+	uint16_t error_code = Check_start_end_point(map_arr, start_point, end_point);
+	bool search_enable = false;
+	if (error_code == 0x001)
 	{
-	case 0x001:
-		ROS_INFO("Error:start point is coincident with obstacle.");
-		break;
-	case 0x010:
-		ROS_INFO("Error:end point is coincident with obstacle.");
-		break;
-	case 0x011:
-		ROS_INFO("Error:two point are coincident with obstacles.");
-		break;
-	case 0x100:
-		ROS_INFO("Error:two points are coincident.");
-		break;
-	case 0x110:
-		ROS_INFO("Error:end point is coincident with obstacle and two points are coincident.");
-		break;
-	case 0x111:
-		ROS_INFO("Error:start point is coincident with obstacle and two points are coincident.");
-		break;
-	default:
+		ROS_ERROR("Error:start point is coincident with obstacle.");
+		ROS_INFO("searching the closest avaiable point");
+		find_avaiable_point(start_point);
+		search_enable = true;
+	}
+	else if (error_code == 0x010)
+	{
+		ROS_ERROR("Error:end point is coincident with obstacle.");
+		ROS_INFO("searching the closest avaiable point");
+		find_avaiable_point(end_point);
+		search_enable = true;
+	}
+	else if (error_code == 0x011)
+	{
+		ROS_ERROR("Error:two point are coincident with obstacles.");
+		ROS_INFO("searching the closest avaiable point");
+		find_avaiable_point(start_point);
+		find_avaiable_point(end_point);
+		search_enable = true;
+	}
+	if (search_enable == true)
+	{
+		ROS_INFO("start_grid:(%d,%d) end_grid:(%d %d)", start_point[0], start_point[1], end_point[0], end_point[1]);
+		ROS_INFO("%d", map_arr[end_point[0]][end_point[1]]);
 		ROS_INFO("Start searching...");
 		start_time = clock();																											// start the clock ticking
 		Path_length = A_star_path_finding(map_arr, start_point, end_point, Path); // core function
@@ -743,8 +827,7 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 			ROS_INFO("No solution to the map");
 			break;
 		default:
-			ROS_INFO("Total runtime:%f", (double)(end_time - start_time) / CLOCKS_PER_SEC);
-			ROS_INFO("There is %d steps in total.", Path_length);
+			ROS_INFO("Total runtime:%f,There is %d steps in total.", (double)(end_time - start_time) / CLOCKS_PER_SEC, Path_length);
 
 			geometry_msgs::PoseStamped poses[Path_length];
 			path.header.frame_id = "map";
@@ -762,17 +845,27 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 			}
 			res.Path = path;
 		}
+		ROS_INFO("Sending back path...");
+		cout << endl;
+	}
+	else
+	{
+		path.poses.clear();
+		res.Path = path;
 	}
 	return true;
 }
 
 int main(int argc, char **argv)
 {
-
 	ros::init(argc, argv, "path_finding_node");
 	ros::NodeHandle nh;
-	ros::ServiceClient client = nh.serviceClient<nav_msgs::GetMap>("static_map");
-	ros::Rate rate(1);
+	ros::ServiceClient client = nh.serviceClient<nav_msgs::GetMap>("/costmap/static_map");
+	dynamic_reconfigure::Server<path_gen_srv::path_srvConfig> dynamic_server;
+	dynamic_reconfigure::Server<path_gen_srv::path_srvConfig>::CallbackType f;
+	f = boost::bind(&reconfigure_callback, _1, _2);
+	dynamic_server.setCallback(f);
+
 	while (!client.call(get_map))
 	{
 		ROS_INFO("service call failed,call again.");
@@ -786,6 +879,8 @@ int main(int argc, char **argv)
 			counter++;
 		}
 	}
+	cost_map = imread("/home/alcatraz/catkin_ws/src/multiple_rb_ctrl/maps/smoothed.pgm", 0);
+	inverse_color();
 	ROS_INFO("map aquired,resolution:%f", get_map.response.map.info.resolution);
 	ros::ServiceServer server = nh.advertiseService("path_server", map_rec_callback);
 	ROS_INFO("Path finder ready!");
