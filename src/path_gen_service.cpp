@@ -22,8 +22,8 @@
 using namespace std;
 using namespace cv;
 // define size of the map.(In ros,4000x4000 is default setting)
-#define Height 400
-#define Width 400
+#define Height 1024
+#define Width 1024
 // define size of openset and closedset
 #define OpenSet_array_size 2000
 #define closedset_array_size 40000
@@ -50,9 +50,9 @@ using namespace cv;
 #define hypotenous 1
 #define normal 0
 // define two bias for coordinate transformation
-#define x_bias -200
-#define y_bias -200
 
+float x_bias = 0;
+float y_bias = 0;
 int8_t map_arr[Height][Width];
 Mat cost_map;
 
@@ -712,10 +712,10 @@ uint16_t Check_start_end_point(int8_t map[Height][Width], uint16_t start_point[2
 
 void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution)
 {
-	start_point[0] = (uint16_t)(start[0] / *map_resolution - y_bias);
-	start_point[1] = (uint16_t)(start[1] / *map_resolution - x_bias);
-	end_point[0] = (uint16_t)(end[0] / *map_resolution - y_bias);
-	end_point[1] = (uint16_t)(end[1] / *map_resolution - x_bias);
+	start_point[0] = (uint16_t)((start[0] - y_bias) / *map_resolution);
+	start_point[1] = (uint16_t)((start[1] - x_bias) / *map_resolution);
+	end_point[0] = (uint16_t)((end[0] - y_bias) / *map_resolution);
+	end_point[1] = (uint16_t)((end[1] - x_bias) / *map_resolution);
 }
 
 void inverse_color(void)
@@ -787,9 +787,11 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	ROS_INFO("%f %f %f %f", start[0], start[1], end[0], end[1]);
 
 	Transform_coordinate(start, end, start_point, end_point, &get_map.response.map.info.resolution);
-
+	ROS_INFO("%d %d %d %d", start_point[0], start_point[1], end_point[0], end_point[1]);
 	uint16_t error_code = Check_start_end_point(map_arr, start_point, end_point);
 	bool search_enable = false;
+	if (error_code == 0)
+		search_enable = true;
 	if (error_code == 0x001)
 	{
 		ROS_ERROR("Error:start point is coincident with obstacle.");
@@ -838,8 +840,8 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 				poses[i].header.frame_id = "map";
 				poses[i].header.stamp = ros::Time::now();
 				poses[i].pose.orientation = tf::createQuaternionMsgFromYaw(0);
-				poses[i].pose.position.x = get_map.response.map.info.resolution * (Path[i][1] + x_bias);
-				poses[i].pose.position.y = get_map.response.map.info.resolution * (Path[i][0] + y_bias);
+				poses[i].pose.position.x = get_map.response.map.info.resolution * Path[i][1] + x_bias;
+				poses[i].pose.position.y = get_map.response.map.info.resolution * Path[i][0] + y_bias;
 				poses[i].pose.position.z = 0;
 				path.poses.push_back(poses[i]);
 			}
@@ -850,6 +852,7 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	}
 	else
 	{
+		ROS_ERROR("not good.");
 		path.poses.clear();
 		res.Path = path;
 	}
@@ -870,7 +873,7 @@ int main(int argc, char **argv)
 	{
 		ROS_INFO("service call failed,call again.");
 	}
-	int counter = 0;
+	uint32_t counter = 0;
 	for (int i = 0; i < Height; i++)
 	{
 		for (int j = 0; j < Width; j++)
@@ -879,7 +882,11 @@ int main(int argc, char **argv)
 			counter++;
 		}
 	}
-	cost_map = imread("/home/alcatraz/catkin_ws/src/multiple_rb_ctrl/maps/smoothed.pgm", 0);
+	x_bias = get_map.response.map.info.origin.position.x;
+	y_bias = get_map.response.map.info.origin.position.y;
+	ROS_INFO("map copy done.");
+	Mat eroded_map = imread("/home/alcatraz/catkin_ws/src/multiple_rb_ctrl/maps/eroded_map.pgm", 0);
+	GaussianBlur(eroded_map, cost_map, Size(21, 15), 9, 9);
 	inverse_color();
 	ROS_INFO("map aquired,resolution:%f", get_map.response.map.info.resolution);
 	ros::ServiceServer server = nh.advertiseService("path_server", map_rec_callback);
