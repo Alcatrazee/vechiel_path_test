@@ -18,6 +18,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include "dynamic_reconfigure/server.h"
 #include <path_gen_srv/path_srvConfig.h>
+#include "spline.h"
 
 using namespace std;
 using namespace cv;
@@ -50,9 +51,8 @@ using namespace cv;
 #define hypotenous 1
 #define normal 0
 // define two bias for coordinate transformation
+//#define use_spline
 
-float x_bias = 0;
-float y_bias = 0;
 int8_t map_arr[Height][Width];
 Mat cost_map;
 
@@ -80,7 +80,7 @@ short Is_in_Open_set(uint16_t point[2], uint16_t Openset[OpenSet_array_size][7])
 uint16_t Find_parent_index(uint16_t parent[2], uint16_t ClosedSet[closedset_array_size][7], uint16_t CloseSet_index);
 uint16_t Get_path(uint16_t ClosedSet[closedset_array_size][7], uint16_t CloseSet_index, uint16_t Path[length][fn], uint16_t start_point[2]);
 uint16_t Check_start_end_point(int8_t map[Height][Width], uint16_t start_point[2], uint16_t end_point[2]);
-void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution);
+void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution, const float x_bias, const float y_bias);
 bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::path_gen_srv::Response &res);
 bool Is_in_open_or_closed_set(uint16_t point[2], uint16_t OpenSet[OpenSet_array_size][7], uint16_t ClosedSet[closedset_array_size][7], uint16_t closed_list_counter);
 inline float Get_cost_map_value(uint16_t point[2]);
@@ -710,7 +710,7 @@ uint16_t Check_start_end_point(int8_t map[Height][Width], uint16_t start_point[2
 	return code;
 }
 
-void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution)
+void Transform_coordinate(float start[2], float end[2], uint16_t start_point[2], uint16_t end_point[2], const float *map_resolution, const float x_bias, const float y_bias)
 {
 	start_point[0] = (uint16_t)((start[0] - y_bias) / *map_resolution);
 	start_point[1] = (uint16_t)((start[1] - x_bias) / *map_resolution);
@@ -784,10 +784,7 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	end[0] = req.goal.position.y;
 	end[1] = req.goal.position.x;
 
-	ROS_INFO("%f %f %f %f", start[0], start[1], end[0], end[1]);
-
-	Transform_coordinate(start, end, start_point, end_point, &get_map.response.map.info.resolution);
-	ROS_INFO("%d %d %d %d", start_point[0], start_point[1], end_point[0], end_point[1]);
+	Transform_coordinate(start, end, start_point, end_point, &get_map.response.map.info.resolution, get_map.response.map.info.origin.position.x, get_map.response.map.info.origin.position.y);
 	uint16_t error_code = Check_start_end_point(map_arr, start_point, end_point);
 	bool search_enable = false;
 	if (error_code == 0)
@@ -816,8 +813,6 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 	}
 	if (search_enable == true)
 	{
-		ROS_INFO("start_grid:(%d,%d) end_grid:(%d %d)", start_point[0], start_point[1], end_point[0], end_point[1]);
-		ROS_INFO("%d", map_arr[end_point[0]][end_point[1]]);
 		ROS_INFO("Start searching...");
 		start_time = clock();																											// start the clock ticking
 		Path_length = A_star_path_finding(map_arr, start_point, end_point, Path); // core function
@@ -829,22 +824,51 @@ bool map_rec_callback(path_gen_srv::path_gen_srv::Request &req, path_gen_srv::pa
 			ROS_INFO("No solution to the map");
 			break;
 		default:
-			ROS_INFO("Total runtime:%f,There is %d steps in total.", (double)(end_time - start_time) / CLOCKS_PER_SEC, Path_length);
 
-			geometry_msgs::PoseStamped poses[Path_length];
 			path.header.frame_id = "map";
 			path.header.stamp = ros::Time::now();
-
+#ifdef use_spline
+			geometry_msgs::PoseStamped poses[Path_length * 2];
+			tk::spline spx, spy;
+			vector<double> pathx, pathy;
+			vector<double> index_of_all;
+			// test code function:put path in a vector and use a spline function to smooth it
 			for (int i = 0; i < Path_length; i++)
 			{
+				pathx.push_back(get_map.response.map.info.resolution * Path[i][1] + get_map.response.map.info.origin.position.x);
+				pathy.push_back(get_map.response.map.info.resolution * Path[i][0] + get_map.response.map.info.origin.position.y);
+				index_of_all.push_back(i);
+			}
+			spx.set_points(index_of_all, pathx);
+			spy.set_points(index_of_all, pathy);
+			float index_of_list = 0;
+			for (int i = 0; i < Path_length * 2; i++)
+			{
+
 				poses[i].header.frame_id = "map";
-				poses[i].header.stamp = ros::Time::now();
-				poses[i].pose.orientation = tf::createQuaternionMsgFromYaw(0);
-				poses[i].pose.position.x = get_map.response.map.info.resolution * Path[i][1] + x_bias;
-				poses[i].pose.position.y = get_map.response.map.info.resolution * Path[i][0] + y_bias;
-				poses[i].pose.position.z = 0;
+				/* 				poses[i].header.stamp = ros::Time::now();
+					poses[i].pose.orientation = tf::createQuaternionMsgFromYaw(0); */
+				poses[i].pose.position.x = spx(index_of_list);
+				poses[i].pose.position.y = spy(index_of_list);
+				/* 				poses[i].pose.position.z = 0; */
+				path.poses.push_back(poses[i]);
+				index_of_list += 0.5;
+			}
+#else
+			geometry_msgs::PoseStamped poses[Path_length];
+			for (int i = 0; i < Path_length; i++)
+			{
+
+				poses[i].header.frame_id = "map";
+				/* 				poses[i].header.stamp = ros::Time::now();
+					poses[i].pose.orientation = tf::createQuaternionMsgFromYaw(0); */
+				poses[i].pose.position.x = get_map.response.map.info.resolution * Path[i][1] + get_map.response.map.info.origin.position.x;
+				poses[i].pose.position.y = get_map.response.map.info.resolution * Path[i][0] + get_map.response.map.info.origin.position.y;
+				/* 				poses[i].pose.position.z = 0; */
 				path.poses.push_back(poses[i]);
 			}
+#endif
+			ROS_INFO("Total runtime:%f,There is %d steps in total.", (double)(end_time - start_time) / CLOCKS_PER_SEC, Path_length);
 			res.Path = path;
 		}
 		ROS_INFO("Sending back path...");
@@ -868,7 +892,7 @@ int main(int argc, char **argv)
 	dynamic_reconfigure::Server<path_gen_srv::path_srvConfig>::CallbackType f;
 	f = boost::bind(&reconfigure_callback, _1, _2);
 	dynamic_server.setCallback(f);
-
+	client.waitForExistence();
 	while (!client.call(get_map))
 	{
 		ROS_INFO("service call failed,call again.");
@@ -882,11 +906,11 @@ int main(int argc, char **argv)
 			counter++;
 		}
 	}
-	x_bias = get_map.response.map.info.origin.position.x;
-	y_bias = get_map.response.map.info.origin.position.y;
 	ROS_INFO("map copy done.");
-	Mat eroded_map = imread("/home/alcatraz/catkin_ws/src/multiple_rb_ctrl/maps/eroded_map.pgm", 0);
-	GaussianBlur(eroded_map, cost_map, Size(21, 15), 9, 9);
+	Mat origin_map = imread("/home/alcatraz/catkin_ws/src/multiple_rb_ctrl/maps/map.pgm", 0);
+	Mat eroded_map;
+	erode(origin_map, eroded_map, getStructuringElement(MORPH_ERODE, Size(5, 5)));
+	GaussianBlur(eroded_map, cost_map, Size(31, 31), 50, 50);
 	inverse_color();
 	ROS_INFO("map aquired,resolution:%f", get_map.response.map.info.resolution);
 	ros::ServiceServer server = nh.advertiseService("path_server", map_rec_callback);

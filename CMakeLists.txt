@@ -58,25 +58,9 @@ catkin_package(
   std_msgs
 )
 
-
-#add_executable(test_srv src/test_srv.cpp)
-#target_link_libraries(test_srv ${catkin_LIBRARIES})
-#add_dependencies(test_srv path_gen_gencpp)
-
-
 add_executable(path_gen_srv src/path_gen_service.cpp)
 target_link_libraries(path_gen_srv ${catkin_LIBRARIES} ${OpenCV_LIBS})
 add_dependencies(path_gen_srv path_gen_gencpp ${PROJECT_NAME}_gencfg)
 
-
-add_executable(vehicle1 src/vehicle1.cpp)
-target_link_libraries(vehicle1 ${catkin_LIBRARIES})
-add_dependencies(vehicle1 path_gen_gencpp)
-
-add_executable(vehicle2 src/vehicle2.cpp)
-target_link_libraries(vehicle2 ${catkin_LIBRARIES})
-add_dependencies(vehicle2 path_gen_gencpp)
-
-add_executable(vehicle3 src/vehicle3.cpp)
-target_link_libraries(vehicle3 ${catkin_LIBRARIES})
-add_dependencies(vehicle3 path_gen_gencpp)
+add_executable(rough_path_gen_node src/rough_map_path.cpp)
+target_link_libraries(rough_path_gen_node ${catkin_LIBRARIES} ${OpenCV_LIBS})
